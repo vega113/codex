@@ -1,8 +1,6 @@
-// Based on reference implementation from
-// https://cookbook.openai.com/examples/gpt4-1_prompting_guide#reference-implementation-apply_patchpy
-
 import fs from "fs";
 import path from "path";
+import { log } from "./log.js";
 
 // -----------------------------------------------------------------------------
 // Types & Models
@@ -544,8 +542,10 @@ export function load_files(
   const orig: Record<string, string> = {};
   for (const p of paths) {
     try {
+      log(`Reading file: ${p}`);
       orig[p] = openFn(p);
-    } catch {
+    } catch (error: unknown) {
+      log(`Error reading file ${p}: ${error instanceof Error ? error.message : String(error)}`);
       // Convert any file read error into a DiffError so that callers
       // consistently receive DiffError for patch-related failures.
       throw new DiffError(`File not found: ${p}`);
@@ -560,17 +560,26 @@ export function apply_commit(
   removeFn: (p: string) => void,
 ): void {
   for (const [p, change] of Object.entries(commit.changes)) {
-    if (change.type === ActionType.DELETE) {
-      removeFn(p);
-    } else if (change.type === ActionType.ADD) {
-      writeFn(p, change.new_content ?? "");
-    } else if (change.type === ActionType.UPDATE) {
-      if (change.move_path) {
-        writeFn(change.move_path, change.new_content ?? "");
+    try {
+      if (change.type === ActionType.DELETE) {
+        log(`Deleting file: ${p}`);
         removeFn(p);
-      } else {
+      } else if (change.type === ActionType.ADD) {
+        log(`Adding file: ${p}`);
         writeFn(p, change.new_content ?? "");
+      } else if (change.type === ActionType.UPDATE) {
+        if (change.move_path) {
+          log(`Moving file from ${p} to ${change.move_path}`);
+          writeFn(change.move_path, change.new_content ?? "");
+          removeFn(p);
+        } else {
+          log(`Updating file: ${p}`);
+          writeFn(p, change.new_content ?? "");
+        }
       }
+    } catch (error: unknown) {
+      log(`Error applying commit to file ${p}: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
     }
   }
 }
